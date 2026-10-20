@@ -1,0 +1,10 @@
+[package]
+name = "sdgen"
+version = "0.1.0"
+edition = "2021"
+description = "Builds the Stencild init SD card for the bq Cervantes 2"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+sha2 = "0.10"
+hex = "0.4"

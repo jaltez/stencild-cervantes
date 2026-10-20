@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face {
+    font-family: "Literata";
+    src: url("../../fuentes/Literata-Regular.ttf");
+    font-weight: 400;
+  }
+  @font-face {
+    font-family: "Literata";
+    src: url("../../fuentes/Literata-Bold.ttf");
+    font-weight: 700;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 800px; height: 600px;
+    background: #ffffff; color: #000000;
+    font-family: "Literata", serif;
+  }
+  .marco {
+    position: absolute; inset: 24px;
+    border: 4px dashed #000;
+    border-radius: 28px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 22px;
+  }
+  .icono { width: 110px; height: 110px; }
+  .titulo {
+    font-size: 64px; font-weight: 700;
+    letter-spacing: 6px;
+  }
+  .sub {
+    font-size: 30px; font-style: italic;
+    color: #000; opacity: 1;
+  }
+  .punto { letter-spacing: 0; }
+</style>
+</head>
+<body>
+  <div class="marco">
+    <!-- icono USB (SVG inline, escala de grises) -->
+    <svg class="icono" viewBox="0 0 16 16" fill="#000">
+      <path d="m7.792.312-1.533 2.3A.25.25 0 0 0 6.467 3H7.5v7.319a2.5 2.5 0 0 0-.515-.298L5.909 9.56A1.5 1.5 0 0 1 5 8.18v-.266a1.5 1.5 0 1 0-1 0v.266a2.5 2.5 0 0 0 1.515 2.298l1.076.461a1.5 1.5 0 0 1 .888 1.129 2.001 2.001 0 1 0 1.021-.006v-.902a1.5 1.5 0 0 1 .756-1.303l1.484-.848A2.5 2.5 0 0 0 11.995 7h.755a.25.25 0 0 0 .25-.25v-2.5a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25v2.5c0 .138.112.25.25.25h.741a1.5 1.5 0 0 1-.747 1.142L8.76 8.99a3 3 0 0 0-.26.17V3h1.033a.25.25 0 0 0 .208-.389L8.208.312a.25.25 0 0 0-.416 0"/>
+    </svg>
+    <div class="titulo">USB READY</div>
+    <div class="sub">waiting for input<span class="punto">…</span></div>
+  </div>
+</body>
+</html>
