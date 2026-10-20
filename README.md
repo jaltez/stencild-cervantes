@@ -1,7 +1,8 @@
 # stencild-cervantes
 
-Interface service and init-SD generator for **Stencild** e-ink panels
-(bq Cervantes 2, E60M00 / Marvell M166E EPD, 800×600 landscape DC).
+Turn a **bq Cervantes 2** (E60M00 / Marvell M166E EPD) e-reader into a
+network-driven **800×600 e-ink display panel** — without touching the
+device's NAND.
 
 Two binaries:
 
@@ -10,6 +11,17 @@ Two binaries:
   self-update, optional tray icon. Runs on Linux and Windows.
 - **`sdgen`** — builds the init SD card tree (FAT32 card content) that turns
   the reader into a panel at boot.
+
+```mermaid
+flowchart LR
+    A["app / script / cron<br/>(any image producer)"] -- "HTTP POST /image" --> S[stencild]
+    S -- "EPD1 serial 115200" --> I[inkd on the reader]
+    I -- "display ioctl" --> P[800x600 e-ink panel]
+```
+
+The reader boots from the SD card in panel mode (stock MFG hook), enumerates
+as a USB CDC-ACM serial port, and `inkd` serves frames; pull the card and
+the stock reader is exactly as it was.
 
 ## Quick start
 
@@ -21,19 +33,46 @@ cargo test --release
 ./target/release/stencild --no-device --frame-out /tmp/f.bin # dry-run, no hardware
 ```
 
+Push your first image (works in dry-run mode too):
+
+```sh
+python3 examples/btc_chart_demo.py   # renders examples/candles.json and POSTs it
+# or, with any image at hand:
+curl -X POST --data-binary @picture.png http://127.0.0.1:8787/image
+```
+
 ## Documentation
 
-- [Apps guide](docs/apps-guide.md) — how to build apps that render for the panel
-  (HTML/JS libraries, image measures, 4bpp packing, refresh times, caveats)
-- [SD guide](docs/sd-guide.md) — producing and using the init SD; reader-mode recovery
-- [Service API](docs/service-api.md) — HTTP endpoints, inbox, EPD1 wire protocol
-- [CLI reference](docs/cli.md) — every command and flag of `stencild` and `sdgen`
+| Doc | Contents |
+|---|---|
+| [Architecture](docs/architecture.md) | How the whole system works: components, boot chain, EPD1 protocol, internals |
+| [Service API](docs/service-api.md) | HTTP endpoints, inbox, EPD1 wire protocol |
+| [Apps guide](docs/apps-guide.md) | Building content producers; rendering rules; full BTC-chart example |
+| [SD guide](docs/sd-guide.md) | Building and using the init SD; recovery back to reader mode |
+| [CLI reference](docs/cli.md) | Every command and flag of `stencild` and `sdgen` |
 
-## Architecture
+## Repository layout
 
 ```
-app (any producer)  --HTTP PNG-->  stencild (this service)  --EPD1 serial-->  inkd (device daemon)
+crates/stencild/    host service (HTTP + serial + inbox + update + installer)
+crates/sdgen/       init-SD tree generator
+assets/firmware/    device-side sources + builds (inkd, epdraw) and kernel modules
+assets/scripts/     SD boot runner and orders (executed on the reader)
+assets/templates/   boot image, HTML/Python conversion helpers
+examples/           runnable demo app (BTC chart) + sample data
+docs/               the guides above
 ```
 
-`inkd` and the kernel modules shipped in `assets/firmware/` were validated on
-hardware; they are embedded into `sdgen` and deployed by the SD tree.
+## Requirements
+
+- Host: Rust 1.70+ (stable). Linux or Windows. A free USB port.
+- Device: bq Cervantes 2 (E60M00), stock firmware. A FAT32 SD card ≥ 64 MB.
+- Hardware is optional for development: `--no-device --frame-out` runs the
+  full conversion pipeline with no panel attached.
+
+## License
+
+Project code is [MIT](LICENSE) © 2026 Javier Altez. The prebuilt kernel
+modules in `assets/firmware/` are GPL-2.0 (Linux 2.6.28 upstream sources,
+linked in [THIRD_PARTY.md](THIRD_PARTY.md)); dependency licenses are also
+summarized there.

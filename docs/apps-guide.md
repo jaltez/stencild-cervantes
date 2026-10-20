@@ -78,3 +78,58 @@ available in the current `inkd`.
 - Avoid dithered gradients; use pure black/white and one or two grays.
 - If the USB link drops, `stencild` returns `ERR offline` immediately and
   retries on the next push; the device daemon also reopens its side.
+
+## Worked example: a 24-hour BTC chart
+
+A complete app is three steps, and only the first one is yours:
+
+1. **Get the data** (any source; here the public Coinbase candles API).
+2. **Render an 800×600 image** (any tool that outputs an image).
+3. **POST it** to `stencild` and sleep until the next refresh.
+
+[`examples/btc_chart_demo.py`](../examples/btc_chart_demo.py) is a runnable
+distillation of exactly that, using the bundled public-market fixture
+`examples/candles.json` (no network needed):
+
+```sh
+pip install pillow
+python3 examples/btc_chart_demo.py --no-push --out chart.png   # render only
+python3 examples/btc_chart_demo.py                             # render + POST
+```
+
+```python
+# the whole integration is this:
+img = render(series)                       # PIL, mode "L", 800x600, white bg
+buf = io.BytesIO(); img.save(buf, "PNG")
+urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:8787/image", data=buf.getvalue(),
+    headers={"Content-Type": "image/png"}), timeout=30)
+```
+
+The production version of this app (from which the example is distilled)
+follows the same shape in Rust: fetch 5-minute candles, keep the last 24 h,
+draw a black price polyline over a faint graticule with a 5×7 bitmap font,
+POST the PNG, sleep 300 s, repeat. Fields worth copying:
+
+- One gray for the grid, black for data and text — no gradients, no dither.
+- Numbers that matter (price, 24 h change, high/low, volume) in fixed
+  positions, so consecutive refreshes change as few pixels as possible.
+- First fetch failure is fatal (bad config); later failures keep the last
+  good frame and retry on the next interval.
+
+### Sending data without writing an app
+
+Anything that can produce a file works. Two zero-code paths:
+
+```sh
+# one-shot push of any image
+curl -X POST --data-binary @photo.png http://127.0.0.1:8787/image
+
+# drop files into a watched directory; stencild pushes and archives them
+stencild --inbox /home/me/panel-inbox
+cp chart.png /home/me/panel-inbox/
+```
+
+For batch/offline conversion the repo also ships
+[`assets/templates/png2epd.py`](../assets/templates/png2epd.py), which
+converts any image to the native `.4bpp` format for `POST /raw`.

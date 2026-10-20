@@ -3,6 +3,7 @@ name = "stencild"
 version = "0.1.0"
 edition = "2021"
 description = "Interface service for Stencild e-ink panels (bq Cervantes 2)"
+license = "MIT"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

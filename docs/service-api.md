@@ -23,11 +23,26 @@ Query parameters:
 - `waveform=N` — 0 INIT, 1 MU, 2 GU (default), 3 GC, 4 NOP
 - `levels`, `dither` — reserved; quantization happens before posting
 
-Responses: `200 {"device":"OK"}`, `502` device error, `400/500` input errors.
+Responses: `200 {"device":"OK"}` on success, `500 {"error":...}` on decode
+or device failure. The `Content-Type` header is ignored — the body is
+sniffed by the decoder, so `curl --data-binary @file.png` works as-is.
+
+```sh
+curl -s -X POST --data-binary @chart.png http://127.0.0.1:8787/image
+curl -s -X POST "http://127.0.0.1:8787/image?invert=1&waveform=3" \
+     --data-binary @chart.png
+```
 
 ### `POST /raw`
 
-Body: exactly 240,000 bytes of packed 4bpp payload. Skips conversion.
+Body: exactly 240,000 bytes of packed 4bpp payload (see
+[apps guide](apps-guide.md) for the packing). Skips conversion; always
+waveform 2, no invert — use `/image` when you need those. Responses:
+`200`, `400` when the size is wrong, `502` on device failure.
+
+```sh
+curl -s -X POST --data-binary @frame.bin http://127.0.0.1:8787/raw
+```
 
 ## Inbox watcher
 

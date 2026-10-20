@@ -24,6 +24,11 @@ records the intended card size in `SD_SIZE.txt` only; no image file is written.
 | `panel/usb/inkd` | Device daemon: EPD1 frames → display ioctl |
 | `panel/usb/g_serial.ko`, `g_ether.ko` | Kernel gadget modules (CDC-ACM / CDC-ECM) |
 
+`g_serial.ko` / `g_ether.ko` are stock Linux 2.6.28 gadget modules
+redistributed under GPL-2.0 (see [THIRD_PARTY](../THIRD_PARTY.md)); the
+other card payloads (`epdraw`, `inkd`) are built from the sources in
+[`assets/firmware/`](../assets/firmware/).
+
 ## Boot behavior
 
 - Card inserted at power-on → panel mode: the reader app (`ebrmain`) never
