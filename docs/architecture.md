@@ -120,6 +120,14 @@ flowchart TD
 - **Self-update** (`update.rs`): local `file://` manifest with sha256,
   atomic binary replacement, optional `--selftest` version check.
   Network manifests are rejected by design.
+- **Tray** (`tray.rs`): `stencild tray` runs the HTTP service plus a
+  resident tray icon (Windows). The menu drives the same service methods
+  the HTTP API exposes: Pause toggles a gate in `push_payload`,
+  Clear repushes the embedded boot image, Update applies a local
+  `manifest.json` (with the running-exe rename dance), and the status line
+  refreshes every 2 s. If a serial exchange fails (or the port was never
+  opened), the next push makes one bounded reopen attempt, so the service
+  self-heals when the device reappears.
 
 ## Design rules learned on this hardware
 

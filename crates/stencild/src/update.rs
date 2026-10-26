@@ -1,7 +1,7 @@
 //! Self-update from a local file:// manifest with sha256 verification.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
@@ -41,10 +41,11 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(hex::encode(h.finalize()))
 }
 
-/// Apply an update into `prefix/bin/stencild`. When `selftest` is set, the
-/// resulting binary is executed with `--version` and must report the manifest
-/// version.
-pub fn apply(manifest_path: &Path, prefix: &Path, selftest: bool) -> Result<String, String> {
+/// Install an update over `target` (the binary file path). When `selftest` is
+/// set, the resulting binary is executed with `--version` and must report the
+/// manifest version. Handles the Windows case where `target` is the running
+/// executable (rename-the-live-exe dance).
+pub fn apply_to(manifest_path: &Path, target: &Path, selftest: bool) -> Result<String, String> {
     let text = fs::read_to_string(manifest_path).map_err(|e| format!("manifest: {e}"))?;
     let m = parse_manifest(&text)?;
     let actual = env!("CARGO_PKG_VERSION");
@@ -57,10 +58,10 @@ pub fn apply(manifest_path: &Path, prefix: &Path, selftest: bool) -> Result<Stri
         return Err(format!("sha256 mismatch for {}: {digest} != {}", src.display(), m.sha256));
     }
 
-    let bin_dir = prefix.join("bin");
-    fs::create_dir_all(&bin_dir).map_err(|e| format!("mkdir: {e}"))?;
-    let target = bin_dir.join("stencild");
-    let staging = bin_dir.join("stencild.new");
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let staging = sibling(target, "new");
     fs::copy(&src, &staging).map_err(|e| format!("stage: {e}"))?;
     #[cfg(unix)]
     {
@@ -68,10 +69,20 @@ pub fn apply(manifest_path: &Path, prefix: &Path, selftest: bool) -> Result<Stri
         fs::set_permissions(&staging, fs::Permissions::from_mode(0o755))
             .map_err(|e| format!("chmod: {e}"))?;
     }
-    fs::rename(&staging, &target).map_err(|e| format!("atomic replace: {e}"))?;
+
+    // Windows locks a running executable for writes, but NOT for rename:
+    // park the live binary as *.old, then move the staged one into place.
+    #[cfg(windows)]
+    if target == std::env::current_exe().map_err(|e| format!("current_exe: {e}"))? {
+        let old = sibling(target, "old");
+        let _ = fs::remove_file(&old);
+        fs::rename(target, &old).map_err(|e| format!("park running exe: {e}"))?;
+    }
+
+    fs::rename(&staging, target).map_err(|e| format!("atomic replace: {e}"))?;
 
     if selftest {
-        let out = Command::new(&target)
+        let out = Command::new(target)
             .arg("--version")
             .output()
             .map_err(|e| format!("selftest exec: {e}"))?;
@@ -85,6 +96,18 @@ pub fn apply(manifest_path: &Path, prefix: &Path, selftest: bool) -> Result<Stri
         }
     }
     Ok(format!("updated to {} at {}", m.version, target.display()))
+}
+
+fn sibling(path: &Path, suffix: &str) -> PathBuf {
+    let name = path.file_name().map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "stencild".into());
+    path.with_file_name(format!("{name}.{suffix}"))
+}
+
+/// Apply an update into `prefix/bin/stencild[.exe]`.
+pub fn apply(manifest_path: &Path, prefix: &Path, selftest: bool) -> Result<String, String> {
+    let name = if cfg!(windows) { "stencild.exe" } else { "stencild" };
+    apply_to(manifest_path, &prefix.join("bin").join(name), selftest)
 }
 
 #[cfg(test)]
@@ -105,7 +128,7 @@ mod tests {
         let good = dir.join("good.json");
         fs::write(
             &good,
-            format!(r#"{{"version":"0.2.0","url":"file://{}","sha256":"{}"}}"#, payload.display(), digest),
+            format!(r#"{{"version":"999.0.0","url":"file://{}","sha256":"{}"}}"#, payload.display(), digest),
         )
         .unwrap();
         let prefix = dir.join("install");
@@ -115,14 +138,14 @@ mod tests {
         let bad = dir.join("bad.json");
         fs::write(
             &bad,
-            format!(r#"{{"version":"0.2.0","url":"file://{}","sha256":"{}"}}"#, payload.display(), "0".repeat(64)),
+            format!(r#"{{"version":"999.0.0","url":"file://{}","sha256":"{}"}}"#, payload.display(), "0".repeat(64)),
         )
         .unwrap();
         assert!(apply(&bad, &prefix, false).is_err());
 
         // matching sha applies atomically
         let msg = apply(&good, &prefix, false).unwrap();
-        assert!(msg.contains("0.2.0"));
+        assert!(msg.contains("999.0.0"));
         assert_eq!(fs::read(prefix.join("bin/stencild")).unwrap(), b"new-binary");
     }
 

@@ -5,10 +5,10 @@ network-driven **800×600 e-ink display panel** — without touching the
 device's NAND.
 
 Two binaries:
-
 - **`stencild`** — host-side interface service: HTTP API, inbox watcher,
   serial transport to the device daemon (`inkd`), installer artifacts,
-  self-update, optional tray icon. Runs on Linux and Windows.
+  self-update, and a resident tray app on Windows (pause/resume, clear to
+  boot image, update, live status). Runs on Linux and Windows.
 - **`sdgen`** — builds the init SD card tree (FAT32 card content) that turns
   the reader into a panel at boot.
 
@@ -18,6 +18,7 @@ flowchart LR
     S -- "EPD1 serial 115200" --> I[inkd on the reader]
     I -- "display ioctl" --> P[800x600 e-ink panel]
 ```
+
 
 The reader boots from the SD card in panel mode (stock MFG hook), enumerates
 as a USB CDC-ACM serial port, and `inkd` serves frames; pull the card and
@@ -31,6 +32,8 @@ cargo test --release
 ./target/release/sdgen build --out /tmp/sdtest --size 64M   # inspect the SD tree
 ./target/release/stencild --listen 127.0.0.1:8787           # serve (device autodetected)
 ./target/release/stencild --no-device --frame-out /tmp/f.bin # dry-run, no hardware
+cargo build --release --target x86_64-pc-windows-gnu --features tray   # Windows tray exe
+stencild.exe tray                                              # resident: tray + HTTP + pause/clear/update
 ```
 
 Push your first image (works in dry-run mode too):

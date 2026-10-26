@@ -7,11 +7,12 @@
 ### `GET /health`
 
 ```json
-{"device":"COM13","online":true,"pushes":42,"last":"OK"}
+{"device":"COM13","online":true,"paused":false,"pushes":42,"last":"OK"}
 ```
 
 `online` probes the device with a PING when a port is open; responds in
 milliseconds when offline. Status 503 when the device is offline.
+`paused:true` means the tray Pause action is holding pushes.
 
 ### `POST /image`
 
@@ -42,6 +43,16 @@ waveform 2, no invert — use `/image` when you need those. Responses:
 
 ```sh
 curl -s -X POST --data-binary @frame.bin http://127.0.0.1:8787/raw
+```
+
+### `POST /clear`
+
+Repaints the embedded boot image ("USB READY") on the panel — same action
+as the tray Clear menu item. Responses: `200 {"device":"OK"}`, `503` when
+paused or offline.
+
+```sh
+curl -s -X POST http://127.0.0.1:8787/clear
 ```
 
 ## Inbox watcher

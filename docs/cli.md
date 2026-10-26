@@ -26,6 +26,20 @@ Default command: `serve`.
 Runs the HTTP service. Autodetection probes serial ports with a PING;
 if nothing answers, continues offline (`/health` shows `online:false`).
 
+### `tray`
+
+Runs the HTTP service with a resident **tray icon** (Windows builds with the
+`tray` feature). Menu: live status line, Pause/Resume (paused pushes fail
+fast with `paused`), Clear panel (repaints the boot image), Check for
+update (applies `manifest.json` found next to the exe), Quit. Non-Windows
+builds run headless like `serve`.
+
+```sh
+cargo build --release --target x86_64-pc-windows-gnu --features tray
+stencild.exe tray                    # autodetect, default port
+stencild.exe tray --device COM13     # explicit port
+```
+
 ### `installer --dry-run --out <DIR>`
 
 Writes installer artifacts to DIR: the binary, `install.sh` (POSIX),
@@ -47,6 +61,10 @@ Self-update from a local manifest (`file:///...` or absolute path):
   the manifest version in its output.
 
 Only local `file://` URLs are accepted.
+
+On Windows the target is `stencild.exe`; a running executable is parked as
+`stencild.exe.old` before the replacement moves in (Windows locks running
+exes against replacement, not against rename).
 
 ## sdgen
 

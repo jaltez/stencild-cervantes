@@ -39,10 +39,7 @@ impl Device {
             return Err(format!("payload must be {PAYLOAD} bytes"));
         }
         let frame = encode(payload, waveform, invert as u8);
-        let Some(lock) = &self.port else {
-            return Err("offline: no device".into());
-        };
-        {
+        if let Some(lock) = &self.port {
             let mut p = lock.lock().unwrap();
             if let Ok(r) = exchange(&mut **p, &frame) {
                 return Ok(r);
@@ -55,7 +52,9 @@ impl Device {
         {
             Ok(mut p) => {
                 let r = exchange(&mut *p, &frame);
-                *lock.lock().unwrap() = p;
+                if let Some(lock) = &self.port {
+                    *lock.lock().unwrap() = p;
+                }
                 r.map_err(|e| format!("offline: {e}"))
             }
             Err(e) => Err(format!("offline: {e}")),

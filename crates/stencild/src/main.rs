@@ -49,6 +49,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run the HTTP service with a resident tray icon (Windows GUI).
+    Tray,
     /// Run the HTTP service (default).
     Serve,
     /// Emit installer artifacts (binary + install scripts).
@@ -123,46 +125,55 @@ fn main() {
                 Err(e) => fail(&e),
             }
         }
-        Some(Command::Serve) | None => {
-            let device = if cli.no_device {
-                device::Device::offline()
-            } else {
-                let name = if cli.device == "auto" {
-                    match device::autodetect() {
-                        Some(p) => p,
-                        None => {
-                            eprintln!("no device found (PING/PONG); continuing offline");
-                            String::from("none")
-                        }
-                    }
-                } else {
-                    cli.device.clone()
-                };
-                if name == "none" {
-                    device::Device::offline()
-                } else {
-                    device::Device::open(&name, cli.waveform)
+        Some(Command::Tray) => {
+            let svc = setup(&cli);
+            let listen = cli.listen.clone();
+            let svc2 = Arc::clone(&svc);
+            std::thread::spawn(move || {
+                if let Err(e) = service::serve(svc2, &listen) {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
                 }
-            };
-
-            println!("[stencild] device: {} (open: {})", device.name, device.is_open());
-            let svc = service::Service::new(device, cli.frame_out.clone(), cli.inbox.clone());
-            svc.spawn_inbox();
-
-            cfg_if_tray();
-
-            if let Err(e) = service::serve(Arc::clone(&svc), &cli.listen) {
+            });
+            tray::run(svc);
+        }
+        Some(Command::Serve) | None => {
+            let svc = setup(&cli);
+            if let Err(e) = service::serve(svc, &cli.listen) {
                 fail(&e);
             }
         }
     }
 }
 
-fn cfg_if_tray() {
-    #[cfg(all(feature = "tray", windows))]
-    tray::spawn();
-}
+/// Build the device + service (shared by `serve` and `tray`).
+fn setup(cli: &Cli) -> Arc<service::Service> {
+    let device = if cli.no_device {
+        device::Device::offline()
+    } else {
+        let name = if cli.device == "auto" {
+            match device::autodetect() {
+                Some(p) => p,
+                None => {
+                    eprintln!("no device found (PING/PONG); continuing offline");
+                    String::from("none")
+                }
+            }
+        } else {
+            cli.device.clone()
+        };
+        if name == "none" {
+            device::Device::offline()
+        } else {
+            device::Device::open(&name, cli.waveform)
+        }
+    };
 
+    println!("[stencild] device: {} (open: {})", device.name, device.is_open());
+    let svc = service::Service::new(device, cli.frame_out.clone(), cli.inbox.clone());
+    svc.spawn_inbox();
+    svc
+}
 fn fail(msg: &str) -> ! {
     eprintln!("error: {msg}");
     std::process::exit(1)

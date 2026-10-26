@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use image::imageops::FilterType;
@@ -17,7 +17,12 @@ pub struct Service {
     pub last: std::sync::Mutex<String>,
     pub frame_out: Option<PathBuf>,
     pub inbox: Option<PathBuf>,
+    /// When set, pushes fail fast with "paused" (tray Pause button).
+    pub paused: AtomicBool,
 }
+
+/// Boot screen ("USB READY") payload used by Clear: 240,000 packed 4bpp bytes.
+pub const CLEAR_PAYLOAD: &[u8] = include_bytes!("../../../assets/templates/boot.4bpp");
 
 impl Service {
     pub fn new(device: Device, frame_out: Option<PathBuf>, inbox: Option<PathBuf>) -> Arc<Self> {
@@ -27,7 +32,22 @@ impl Service {
             last: std::sync::Mutex::new(String::new()),
             frame_out,
             inbox,
+            paused: AtomicBool::new(false),
         })
+    }
+
+    #[cfg_attr(not(all(feature = "tray", windows)), allow(dead_code))]
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
+    /// Reset the panel to the boot image (tray Clear / POST /clear).
+    pub fn clear_panel(&self) -> Result<String, String> {
+        self.push_payload(CLEAR_PAYLOAD, None, false)
     }
 
     /// Convert image bytes (any supported format) to a panel payload.
@@ -51,6 +71,11 @@ impl Service {
 
     /// Send a payload to the panel (or dump the frame when in dry-run mode).
     pub fn push_payload(&self, payload: &[u8], waveform: Option<u8>, invert: bool) -> Result<String, String> {
+        if self.is_paused() {
+            let e = "paused".to_string();
+            *self.last.lock().unwrap() = e.clone();
+            return Err(e);
+        }
         let wf = waveform.unwrap_or(self.device.waveform);
         let result = if let Some(path) = &self.frame_out {
             let frame = encode(payload, wf, invert as u8);
@@ -79,9 +104,10 @@ impl Service {
     pub fn health_json(&self) -> String {
         let online = self.device.is_open() && self.device.ping();
         format!(
-            "{{\"device\":\"{}\",\"online\":{},\"pushes\":{},\"last\":\"{}\"}}",
+            "{{\"device\":\"{}\",\"online\":{},\"paused\":{},\"pushes\":{},\"last\":\"{}\"}}",
             self.device.name,
             online,
+            self.is_paused(),
             self.pushes.load(Ordering::Relaxed),
             self.last.lock().unwrap()
         )
@@ -132,7 +158,7 @@ impl Service {
 
 pub fn serve(service: Arc<Service>, listen: &str) -> Result<(), String> {
     let server = tiny_http::Server::http(listen).map_err(|e| format!("bind {listen}: {e}"))?;
-    println!("[stencild] HTTP on {listen} (/health /image /raw)");
+    println!("[stencild] HTTP on {listen} (/health /image /raw /clear)");
     for mut req in server.incoming_requests() {
         let (method, url) = (req.method().clone(), req.url().to_string());
         let mut body = Vec::new();
@@ -179,6 +205,14 @@ pub fn serve(service: Arc<Service>, listen: &str) -> Result<(), String> {
                         .with_header(json_ct),
                 }
             }
+            (Method::Post, "/clear") => match service.clear_panel() {
+                Ok(r) => Response::from_string(format!("{{\"device\":\"{r}\"}}"))
+                    .with_status_code(200)
+                    .with_header(json_ct),
+                Err(e) => Response::from_string(format!("{{\"error\":\"{e}\"}}"))
+                    .with_status_code(503)
+                    .with_header(json_ct),
+            },
             _ => Response::from_string("{\"error\":\"unknown\"}")
                 .with_status_code(404)
                 .with_header(json_ct),
@@ -205,5 +239,24 @@ mod tests {
         assert_eq!(payload.len(), PAYLOAD);
         assert_eq!(payload[0] & 0x0F, 0x0); // even pixel 0 = low nibble 0 (black)
         assert_eq!(payload[0] >> 4, 0xF); // odd pixel 1 = high nibble 0xF (white)
+    }
+
+    #[test]
+    fn paused_service_rejects_pushes_without_counting() {
+        let svc = Service::new(Device::offline(), None, None);
+        svc.set_paused(true);
+        let err = svc.push_payload(&vec![0u8; PAYLOAD], None, false).unwrap_err();
+        assert_eq!(err, "paused");
+        assert_eq!(svc.pushes.load(Ordering::Relaxed), 0);
+        assert_eq!(svc.last.lock().unwrap().as_str(), "paused");
+        assert!(svc.health_json().contains("\"paused\":true"));
+    }
+
+    #[test]
+    fn clear_payload_is_a_full_boot_frame() {
+        assert_eq!(CLEAR_PAYLOAD.len(), PAYLOAD);
+        let svc = Service::new(Device::offline(), None, None);
+        svc.set_paused(true);
+        assert_eq!(svc.clear_panel().unwrap_err(), "paused");
     }
 }
