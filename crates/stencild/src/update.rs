@@ -21,7 +21,13 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
 
 pub fn file_from_url(url: &str) -> Result<std::path::PathBuf, String> {
     if let Some(rest) = url.strip_prefix("file://") {
-        return Ok(std::path::PathBuf::from(rest));
+        // file:///C:/x strips to "/C:/x" — drop the leading slash only
+        // when a drive spec follows, so POSIX paths keep their root.
+        let b = rest.as_bytes();
+        let is_drive =
+            b.len() >= 4 && b[0] == b'/' && b[2] == b':' && (b[3] == b'/' || b[3] == b'\\');
+        let path = if is_drive { &rest[1..] } else { rest };
+        return Ok(std::path::PathBuf::from(path.replace('\\', "/")));
     }
     if url.starts_with('/') {
         return Ok(std::path::PathBuf::from(url));
@@ -70,13 +76,15 @@ pub fn apply_to(manifest_path: &Path, target: &Path, selftest: bool) -> Result<S
             .map_err(|e| format!("chmod: {e}"))?;
     }
 
-    // Windows locks a running executable for writes, but NOT for rename:
-    // park the live binary as *.old, then move the staged one into place.
+    // Windows cannot rename over an existing executable (locked while
+    // running), but renaming the occupied name away IS allowed: park the
+    // current target as *.old, then move the staged one into place. This
+    // covers both self-update and updating another installed copy.
     #[cfg(windows)]
-    if target == std::env::current_exe().map_err(|e| format!("current_exe: {e}"))? {
+    if target.exists() {
         let old = sibling(target, "old");
         let _ = fs::remove_file(&old);
-        fs::rename(target, &old).map_err(|e| format!("park running exe: {e}"))?;
+        fs::rename(target, &old).map_err(|e| format!("park current exe: {e}"))?;
     }
 
     fs::rename(&staging, target).map_err(|e| format!("atomic replace: {e}"))?;
@@ -153,5 +161,17 @@ mod tests {
     fn rejects_non_local_urls() {
         assert!(file_from_url("https://example.com/x").is_err());
         assert!(file_from_url("file:///tmp/x").is_ok());
+    }
+
+    #[test]
+    fn windows_file_urls_lose_only_the_extra_slash() {
+        assert_eq!(
+            file_from_url("file:///C:/Users/x/stencild.exe").unwrap(),
+            std::path::PathBuf::from("C:/Users/x/stencild.exe")
+        );
+        assert_eq!(
+            file_from_url("file:///tmp/x").unwrap(),
+            std::path::PathBuf::from("/tmp/x")
+        );
     }
 }

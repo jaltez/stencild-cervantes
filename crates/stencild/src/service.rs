@@ -156,9 +156,16 @@ impl Service {
     }
 }
 
-pub fn serve(service: Arc<Service>, listen: &str) -> Result<(), String> {
+/// Bind the listener; the tray path calls this on the main thread so bind
+/// failures can be reported before any UI exists.
+pub fn bind(listen: &str) -> Result<tiny_http::Server, String> {
     let server = tiny_http::Server::http(listen).map_err(|e| format!("bind {listen}: {e}"))?;
     println!("[stencild] HTTP on {listen} (/health /image /raw /clear)");
+    Ok(server)
+}
+
+/// Serve requests on an already-bound listener. Blocks forever.
+pub fn serve_on(service: Arc<Service>, server: tiny_http::Server) {
     for mut req in server.incoming_requests() {
         let (method, url) = (req.method().clone(), req.url().to_string());
         let mut body = Vec::new();
@@ -219,6 +226,12 @@ pub fn serve(service: Arc<Service>, listen: &str) -> Result<(), String> {
         };
         req.respond(resp).ok();
     }
+}
+
+/// Bind + serve (CLI path).
+pub fn serve(service: Arc<Service>, listen: &str) -> Result<(), String> {
+    let server = bind(listen)?;
+    serve_on(service, server);
     Ok(())
 }
 

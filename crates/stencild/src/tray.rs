@@ -1,6 +1,8 @@
 //! Tray icon + menu: resident control of the Stencild service.
 //!
 //! Windows: real tray (icon, menu, live status) via `tray-icon`/`muda`.
+//! The process detaches from its console (`FreeConsole`), so it survives
+//! the launching terminal closing and works as a double-click target.
 //! Other platforms: headless — the HTTP service still runs, the tray is a
 //! no-op loop, so `stencild tray` behaves like `serve` there.
 //!
@@ -49,15 +51,72 @@ pub fn selftest() -> Result<(), String> {
     Ok(())
 }
 
-/// Run the tray loop until Quit is picked. Blocks the calling thread.
+/// Report a fatal tray-mode error. On Windows this is a message box
+/// (the console may already be gone); elsewhere it is plain stderr.
+pub fn fatal(msg: &str) {
+    #[cfg(all(feature = "tray", windows))]
+    win::alert_error(msg);
+    #[cfg(not(all(feature = "tray", windows)))]
+    eprintln!("{msg}");
+}
+
+/// Run the tray loop until Quit/Restart. Blocks the calling thread.
 pub fn run(service: Arc<Service>) {
     cfg_run(service);
+}
+
+#[cfg(all(feature = "tray", windows))]
+mod win {
+    /// Full argv, captured at first use for Restart (respawn with same
+    /// arguments).
+    pub static ARGS: std::sync::LazyLock<Vec<String>> =
+        std::sync::LazyLock::new(|| std::env::args().collect());
+
+
+    /// Detach from the launching console so closing the terminal (or the
+    /// double-click console flash) does not kill the resident process.
+    pub fn detach_from_console() {
+        use windows_sys::Win32::System::Console::FreeConsole;
+        unsafe { FreeConsole() };
+    }
+
+    pub fn alert_error(msg: &str) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            MessageBoxA, MB_ICONERROR, MB_OK,
+        };
+        let mut text = msg.to_string();
+        text.push('\0');
+        let title = b"stencild\0";
+        unsafe {
+            MessageBoxA(
+                std::ptr::null_mut(),
+                text.as_ptr(),
+                title.as_ptr(),
+                MB_OK | MB_ICONERROR,
+            );
+        }
+    }
+
+    /// Spawn a fresh detached copy of this program with the same arguments
+    /// (used by Restart and by update-then-restart).
+    pub fn spawn_detached() -> std::io::Result<()> {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::DETACHED_PROCESS;
+        let exe = std::env::current_exe()?;
+        std::process::Command::new(exe)
+            .args(ARGS.iter().skip(1))
+            .creation_flags(DETACHED_PROCESS)
+            .spawn()
+            .map(|_| ())
+    }
 }
 
 #[cfg(all(feature = "tray", windows))]
 fn cfg_run(service: Arc<Service>) {
     use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
     use tray_icon::{TrayIcon, TrayIconBuilder};
+
+    win::detach_from_console();
 
     let img = image::load_from_memory(ICON_PNG).expect("icon");
     let rgba = img.to_rgba8();
@@ -67,6 +126,7 @@ fn cfg_run(service: Arc<Service>) {
     let status = MenuItem::with_id(MenuId::new("status"), "stencild", false, None);
     let pm = MenuItem::with_id(MenuId::new("pm"), pause_label(false), true, None);
     let clear = MenuItem::with_id(MenuId::new("clear"), "Clear panel (boot image)", true, None);
+    let restart = MenuItem::with_id(MenuId::new("restart"), "Restart", true, None);
     let update = MenuItem::with_id(MenuId::new("update"), "Check for update…", true, None);
     let quit = MenuItem::with_id(MenuId::new("quit"), "Quit", true, None);
 
@@ -76,12 +136,18 @@ fn cfg_run(service: Arc<Service>) {
     menu.append(&pm).expect("menu pm");
     menu.append(&clear).expect("menu clear");
     menu.append(&PredefinedMenuItem::separator()).expect("menu sep2");
+    menu.append(&restart).expect("menu restart");
     menu.append(&update).expect("menu update");
     menu.append(&quit).expect("menu quit");
 
     let refresh = |tray: &TrayIcon| {
         let online = service.device.is_open() && service.device.ping();
-        let text = status_text(online, service.is_paused(), service.pushes.load(Ordering::Relaxed), &service.last.lock().unwrap());
+        let text = status_text(
+            online,
+            service.is_paused(),
+            service.pushes.load(Ordering::Relaxed),
+            &service.last.lock().unwrap(),
+        );
         let _ = status.set_text(text.clone());
         let _ = pm.set_text(pause_label(service.is_paused()));
         tray.set_tooltip(Some(&text)).ok();
@@ -111,12 +177,28 @@ fn cfg_run(service: Arc<Service>) {
                         }
                     });
                 }
+                "restart" => {
+                    drop(tray);
+                    if let Err(e) = win::spawn_detached() {
+                        win::alert_error(&format!("restart failed: {e}"));
+                    }
+                    std::process::exit(0);
+                }
                 "update" => {
                     std::thread::spawn({
                         let svc = Arc::clone(&service);
                         move || {
-                            let msg = check_for_update();
-                            *svc.last.lock().unwrap() = msg;
+                            let (msg, applied) = check_for_update();
+                            *svc.last.lock().unwrap() = msg.clone();
+                            if applied {
+                                std::thread::sleep(Duration::from_secs(3));
+                                if let Err(e) = win::spawn_detached() {
+                                    *svc.last.lock().unwrap() =
+                                        format!("restart after update failed: {e}");
+                                } else {
+                                    std::process::exit(0);
+                                }
+                            }
                         }
                     });
                 }
@@ -133,16 +215,22 @@ fn cfg_run(service: Arc<Service>) {
 }
 
 /// Look for `manifest.json` next to the running binary and apply it.
+/// Returns (user message, whether a restart is needed to run the update).
 #[cfg(all(feature = "tray", windows))]
-fn check_for_update() -> String {
+fn check_for_update() -> (String, bool) {
     let Ok(exe) = std::env::current_exe() else {
-        return "update: cannot locate running exe".to_string();
+        return ("update: cannot locate running exe".to_string(), false);
     };
     let manifest = exe.parent().map(|d| d.join("manifest.json"));
     match manifest {
-        Some(p) if p.exists() => crate::update::apply_to(&p, &exe, false)
-            .unwrap_or_else(|e| format!("update: {e}")),
-        _ => "update: no manifest.json next to exe".to_string(),
+        Some(p) if p.exists() => match crate::update::apply_to(&p, &exe, false) {
+            Ok(msg) => {
+                let applied = msg.starts_with("updated to");
+                (msg, applied)
+            }
+            Err(e) => (format!("update: {e}"), false),
+        },
+        _ => ("update: no manifest.json next to exe".to_string(), false),
     }
 }
 
@@ -162,7 +250,10 @@ mod tests {
     fn status_text_covers_states() {
         assert_eq!(status_text(true, false, 3, ""), "stencild online · 3 pushes");
         assert_eq!(status_text(true, true, 3, ""), "stencild paused · 3 pushes");
-        assert_eq!(status_text(false, false, 0, "ERR x"), "stencild offline · 0 pushes · last: ERR x");
+        assert_eq!(
+            status_text(false, false, 0, "ERR x"),
+            "stencild offline · 0 pushes · last: ERR x"
+        );
     }
 
     #[test]

@@ -33,7 +33,7 @@ cargo test --release
 ./target/release/stencild --listen 127.0.0.1:8787           # serve (device autodetected)
 ./target/release/stencild --no-device --frame-out /tmp/f.bin # dry-run, no hardware
 cargo build --release --target x86_64-pc-windows-gnu --features tray   # Windows tray exe
-stencild.exe tray                                              # resident: tray + HTTP + pause/clear/update
+stencild.exe tray --device COM13    # resident tray (double-click friendly); see docs/cli.md
 ```
 
 Push your first image (works in dry-run mode too):

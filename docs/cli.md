@@ -29,15 +29,23 @@ if nothing answers, continues offline (`/health` shows `online:false`).
 ### `tray`
 
 Runs the HTTP service with a resident **tray icon** (Windows builds with the
-`tray` feature). Menu: live status line, Pause/Resume (paused pushes fail
-fast with `paused`), Clear panel (repaints the boot image), Check for
-update (applies `manifest.json` found next to the exe), Quit. Non-Windows
-builds run headless like `serve`.
+`tray` feature). The process detaches from its console, so it survives the
+launching terminal closing and works as a plain double-click target (the
+console window flashes once and disappears).
+
+Menu: live status line (refreshes every 2 s, doubles as tooltip),
+Pause/Resume (paused pushes fail fast with `paused`), Clear panel (repaints
+the boot image), Restart (respawns a detached copy with the same
+arguments and exits), Check for update… (applies `manifest.json` found
+next to the exe, then auto-restarts), Quit. Bind failures show a message
+box instead of dying silently. Non-Windows builds run headless like
+`serve`.
 
 ```sh
 cargo build --release --target x86_64-pc-windows-gnu --features tray
-stencild.exe tray                    # autodetect, default port
-stencild.exe tray --device COM13     # explicit port
+stencild.exe installer --out dist-win          # exe + install.ps1
+powershell -File dist-win/install.ps1          # → %LOCALAPPDATA%\stencild\bin
+stencild.exe tray --device COM13               # or make a desktop shortcut of this
 ```
 
 ### `installer --dry-run --out <DIR>`

@@ -127,14 +127,17 @@ fn main() {
         }
         Some(Command::Tray) => {
             let svc = setup(&cli);
-            let listen = cli.listen.clone();
-            let svc2 = Arc::clone(&svc);
-            std::thread::spawn(move || {
-                if let Err(e) = service::serve(svc2, &listen) {
-                    eprintln!("error: {e}");
-                    std::process::exit(1);
+            // Bind on the main thread: a port conflict must be visible
+            // (console is detached by the tray loop, so stderr is lost).
+            let server = match service::bind(&cli.listen) {
+                Ok(s) => s,
+                Err(e) => {
+                    tray::fatal(&e);
+                    fail(&e);
                 }
-            });
+            };
+            let svc_serve = Arc::clone(&svc);
+            std::thread::spawn(move || service::serve_on(svc_serve, server));
             tray::run(svc);
         }
         Some(Command::Serve) | None => {
