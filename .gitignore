@@ -1,2 +1,9 @@
 target/
 dist*/
+
+# agents
+.pi/
+.omp/
+.amp/
+.zcode/
+.opencode/
